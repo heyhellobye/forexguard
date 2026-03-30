@@ -1,3 +1,11 @@
+---
+title: ForexGuard
+emoji: 🛡️
+colorFrom: red
+colorTo: blue
+sdk: docker
+pinned: false
+---
 # ForexGuard — Real-Time Trader Anomaly Detection Engine
 
 > **AI/ML Internship Assessment Prototype**  
