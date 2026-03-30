@@ -6,78 +6,65 @@ colorTo: blue
 sdk: docker
 pinned: false
 ---
+
 # ForexGuard — Real-Time Trader Anomaly Detection Engine
 
-> **AI/ML Internship Assessment Prototype**  
-> Detects suspicious trader behaviour using an ensemble of unsupervised ML models,
-> a streaming simulation layer, and a production-grade FastAPI inference server.
+> **AI/ML Internship Assessment Submission**
+> A production-ready anomaly detection system for forex broker compliance teams.
+> Detects suspicious trader behaviour in real time using an ensemble of unsupervised ML models,
+> streaming simulation, Kafka/RabbitMQ alert publishing, and Gemini LLM-generated risk narratives.
 
 ---
 
-## Table of Contents
-1. [Architecture Overview](#architecture-overview)
-2. [Directory Structure](#directory-structure)
-3. [Quick Start](#quick-start)
-4. [Step-by-Step Setup](#step-by-step-setup)
-5. [Model Explanation](#model-explanation)
-6. [Feature Engineering](#feature-engineering)
-7. [API Reference](#api-reference)
-8. [Streaming Simulation](#streaming-simulation)
-9. [Docker Deployment](#docker-deployment)
-10. [MLflow Tracking](#mlflow-tracking)
-11. [Assumptions, Trade-offs & Limitations](#assumptions-trade-offs--limitations)
+## Links
+
+| | |
+|---|---|
+| **Live Demo** | https://Lavanya-777-forexguard.hf.space/docs |
+| **GitHub** | https://github.com/heyhellobye/forexguard |
+| **API Health** | https://Lavanya-777-forexguard.hf.space/health |
+| **All Alerts** | https://Lavanya-777-forexguard.hf.space/alerts |
 
 ---
 
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                   EVENT SOURCES                          │
-│  Client Portal Events  │  WebTrader Events  │  Replay   │
-└────────────┬─────────────────────────────────────────────┘
-             │ async micro-batches
-             ▼
-┌──────────────────────────────────────────────────────────┐
-│         STREAMING LAYER  (streaming/simulator.py)        │
-│  EventStreamSimulator → rolling per-user state           │
-│  heuristic rule scorer → real-time alert emission        │
-└────────────┬─────────────────────────────────────────────┘
-             │ per-user event history
-             ▼
-┌──────────────────────────────────────────────────────────┐
-│       FEATURE ENGINEERING  (features/engineering.py)     │
-│  ~30 per-user aggregate features + LSTM time sequences   │
-└────────────┬─────────────────────────────────────────────┘
-             │
-       ┌─────┴──────────────────┐
-       ▼                        ▼
-┌─────────────────┐    ┌────────────────────────┐
-│ BASELINE MODELS │    │  ADVANCED MODEL         │
-│ Isolation Forest│    │  LSTM Autoencoder       │
-│ LOF             │    │  (T=12 × F=30 seqs)     │
-│ SHAP explain.   │    │  Reconstruction error   │
-└────────┬────────┘    └──────────┬─────────────┘
-         │  score∈[0,1]           │  score∈[0,1]
-         └──────────┬─────────────┘
-                    ▼
-         ┌────────────────────────┐
-         │  ENSEMBLE SCORER       │
-         │  IF×0.35+LOF×0.25      │
-         │  +LSTM×0.40            │
-         └──────────┬─────────────┘
-                    ▼
-         ┌────────────────────────┐
-         │  ALERT GENERATOR       │
-         │  Severity + Summary    │
-         │  Top features          │
-         └──────────┬─────────────┘
-                    ▼
-         ┌────────────────────────┐
-         │  FastAPI  (:8000)      │
-         │  /score /predict       │
-         │  /alerts /stream       │
-         └────────────────────────┘
+EVENT SOURCES
+Client Portal Events | WebTrader Events | Stream Replay
+         |
+         v async micro-batches
+STREAMING LAYER  (streaming/simulator.py)
+EventStreamSimulator -> rolling per-user state -> alert emission
+         |
+         v
+FEATURE ENGINEERING  (features/engineering.py + cross_user.py)
+59 per-user features + 5 cross-user graph features
+Login | Trading | Financial | KYC | Session | News | Graph
+         |
+    +----+--------------------+
+    v                         v
+BASELINE MODELS          ADVANCED MODEL
+Isolation Forest         LSTM Autoencoder
+LOF                      (T=12 x F=64 sequences)
+SHAP explanations        Reconstruction error score
+    |                         |
+    +----------+--------------+
+               v
+         ENSEMBLE SCORER
+         IF x0.35 + LOF x0.25 + LSTM x0.40
+         + Disagreement Score
+               |
+               v
+         ALERT GENERATOR
+         4-tier severity (LOW/MEDIUM/HIGH/CRITICAL)
+         46 compliance flag rules
+         Gemini LLM risk narratives
+               |
+         +-----+-----+
+         v           v
+      FastAPI    Message Brokers
+    10 endpoints  Kafka + RabbitMQ
 ```
 
 ---
@@ -86,39 +73,30 @@ pinned: false
 
 ```
 forexguard/
-├── config.py                  # All hyper-parameters & paths
-├── train.py                   # End-to-end training pipeline
+├── config.py                    # All hyperparameters and paths
+├── train.py                     # End-to-end training pipeline (8 steps)
 ├── requirements.txt
 ├── Dockerfile
-├── docker-compose.yml
-│
+├── docker-compose.yml           # API + Redpanda + RabbitMQ + MLflow
 ├── data/
-│   ├── generate.py            # Synthetic 50 000-event generator
-│   ├── events.csv             # Generated after train.py
-│   └── labels.csv             # Ground-truth anomaly labels
-│
+│   └── generate.py              # Synthetic 50 000-event generator (16 anomaly types)
 ├── features/
-│   └── engineering.py         # Per-user + LSTM sequence builder
-│
+│   ├── engineering.py           # 59 per-user behavioural features
+│   └── cross_user.py            # 5 cross-user graph features
 ├── models/
-│   ├── baseline.py            # IsolationForest + LOF w/ SHAP
-│   └── lstm_ae.py             # LSTM Autoencoder (PyTorch)
-│
+│   ├── baseline.py              # Isolation Forest + LOF with SHAP
+│   └── lstm_ae.py               # LSTM Autoencoder (PyTorch)
 ├── streaming/
-│   └── simulator.py           # Async event-stream replay
-│
+│   ├── simulator.py             # Async event-stream replay
+│   ├── kafka_publisher.py       # Kafka/Redpanda alert publisher
+│   ├── rabbitmq_publisher.py    # RabbitMQ alert publisher
+│   └── alert_router.py          # Unified broker interface
 ├── api/
-│   ├── main.py                # FastAPI app
-│   └── schemas.py             # Pydantic schemas
-│
-├── utils/
-│   └── alerts.py              # Alert dataclass + templates
-│
-└── saved_models/              # Serialised models (post-training)
-    ├── isolation_forest.pkl
-    ├── lof.pkl
-    ├── lstm_ae.pt
-    └── training_summary.json
+│   ├── main.py                  # FastAPI application (10 endpoints)
+│   └── schemas.py               # Pydantic request/response models
+└── utils/
+    ├── alerts.py                # Alert generation + 46 flag rules
+    └── llm_summary.py           # Gemini LLM risk narrative generator
 ```
 
 ---
@@ -126,165 +104,100 @@ forexguard/
 ## Quick Start
 
 ```bash
+git clone https://github.com/heyhellobye/forexguard.git
 cd forexguard
 pip install -r requirements.txt
-python train.py                          # ~5-10 min on CPU
-uvicorn api.main:app --port 8000 --reload
-open http://localhost:8000/docs
-```
-
----
-
-## Step-by-Step Setup
-
-### Prerequisites
-- Python 3.10 or 3.11
-- pip >= 23
-- 4 GB RAM minimum (8 GB recommended for LSTM training)
-- CUDA GPU optional
-
-### 1 — Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2 — Train all models
-
-```bash
 python train.py
+python -m uvicorn api.main:app --port 8000 --reload
 ```
 
-This single command:
-- Generates `data/events.csv` (~50 000 events, 500 users, ~6% anomalous)
-- Builds `data/features.csv` (~30 features per user)
-- Trains Isolation Forest → `saved_models/isolation_forest.pkl`
-- Trains LOF             → `saved_models/lof.pkl`
-- Trains LSTM Autoencoder → `saved_models/lstm_ae.pt`
-- Prints AUROC / Precision / Recall / F1 per model + ensemble
-- Saves `saved_models/training_summary.json`
+Open http://localhost:8000/docs
 
-Force-regenerate fresh data:
+### Enable Gemini LLM Summaries (optional)
 ```bash
-python train.py --regen
+pip install google-generativeai
+set GEMINI_API_KEY=your-key-here
 ```
+Get a free key at https://aistudio.google.com/app/apikey
 
-### 3 — Start the API
-
+### Run with Docker (includes Kafka + RabbitMQ)
 ```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
-
-### 4 — Test the endpoints
-
-**Score a known user:**
-```bash
-curl -X POST http://localhost:8000/score \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "user_0042"}'
-```
-
-**Online inference from raw features:**
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "new_user_999",
-    "features": {
-      "n_unique_ips": 4.2,
-      "volume_spike_ratio": 8.5,
-      "small_deposit_ratio": 3.1
-    }
-  }'
-```
-
-**All alerts above threshold:**
-```bash
-curl "http://localhost:8000/alerts?threshold=0.55&limit=20"
-```
-
-**Start stream + poll status:**
-```bash
-curl http://localhost:8000/stream/start
-curl http://localhost:8000/stream/status
-```
-
-**Run stream standalone:**
-```bash
-python -m streaming.simulator
-```
-
-**Interactive docs:**
-```
-http://localhost:8000/docs      # Swagger UI
-http://localhost:8000/redoc     # ReDoc
+docker compose up --build
 ```
 
 ---
 
-## Model Explanation
+## Dataset
 
-### Baseline 1 — Isolation Forest
-**Why chosen:** Industry standard for tabular anomaly detection. Isolates anomalies by randomly partitioning the feature space; anomalies require fewer splits (shorter path length). Handles high-dimensional data efficiently in O(n log n).
+Synthetic dataset of ~51,000 events across 500 users. 8% anomalous users with 16 injected anomaly patterns:
 
-**Details:**
-- 200 trees, contamination=0.06
-- SHAP TreeExplainer for per-sample feature contributions
-- Score normalised to [0,1]
-
-### Baseline 2 — Local Outlier Factor (LOF)
-**Why chosen:** Captures *local* density anomalies — a trader deviating from their peer neighbourhood rather than the global population. Useful for detecting users who behave unusually vs. similar accounts (same size, frequency tier).
-
-**Details:**
-- `novelty=True` for inference on unseen data
-- n_neighbors=20, contamination=0.06
-- Permutation-based feature importance
-
-### Advanced — LSTM Autoencoder
-**Why chosen:** Temporal dependencies (e.g. sudden volume spike after weeks of normal activity) are invisible to static tabular models. An autoencoder trained only on normal users learns to reconstruct normal sequences; anomalous sequences yield high reconstruction error.
-
-**Architecture:**
-```
-Input  (B, T=12, F=30)
-  └─ Encoder LSTM (2 layers, H=64)
-       └─ FC bottleneck → latent=16
-            └─ FC expand → H=64
-                 └─ Decoder LSTM → Output (B, T=12, F=30)
-```
-- Trained on normal users only
-- Threshold = 95th percentile of training reconstruction errors
-- Per-feature reconstruction error = explanation
-
-### Ensemble Scoring
-```
-score = 0.35 × IF  +  0.25 × LOF  +  0.40 × LSTM_AE
-```
-Weights are configurable in `config.py`. LSTM receives highest weight as it uniquely captures temporal context.
+| Type | Pattern | Category |
+|---|---|---|
+| A | Rapid IP/geo switching | Login |
+| B | Deposit -> minimal trade -> withdrawal | Financial |
+| C | Trade volume spike (20x) | Trading |
+| D | High-frequency small deposits (structuring) | Financial |
+| E | Bot-like navigation (30s intervals) | Behavioural |
+| F | Simultaneous multi-IP logins | Login |
+| G | IP hub (multiple accounts share one IP) | Network |
+| H | Bonus abuse cycle | Financial |
+| I | Rapid KYC changes before withdrawal | Account |
+| J | Brute force login then immediate withdrawal | Login |
+| K | Trades aligned with news events | Temporal |
+| L | Dormancy then sudden large withdrawal | Financial |
+| M | Impossible travel (Mumbai to London in 12 min) | Login |
+| N | Micro-deposit probing before large transfer | Financial |
+| O | Off-hours automation (1AM-5AM perfect timing) | Behavioural |
+| P | First-session expert trading (no learning curve) | Behavioural |
 
 ---
 
 ## Feature Engineering
 
-~30 per-user features, z-score normalised:
+64 total features per user (59 individual + 5 cross-user):
 
-| Feature | Signal Detected |
-|---|---|
-| `n_unique_ips` | IP diversity / account sharing |
-| `n_unique_countries` | Geo-switching |
-| `ip_switch_rate` | Rapid IP rotation |
-| `simultaneous_login_ratio` | Concurrent multi-IP logins |
-| `unusual_hour_ratio` | Off-hours access (00:00–06:00) |
-| `volume_spike_ratio` | Trade volume spike (max/mean) |
-| `instrument_concentration` | Single-instrument overuse |
-| `avg_inter_trade_min` | High-frequency trading |
-| `min_inter_trade_min` | Latency arbitrage |
-| `pnl_std` | Erratic / suspicious PnL |
-| `win_rate` | Consistent abnormal profit |
-| `small_deposit_ratio` | Structuring (<$1 000 deposits) |
-| `deposit_per_trade` | Deposit cycling ratio |
-| `deposit_withdrawal_ratio` | Wash-cycling indicator |
-| `max_navigation_rate` | Bot-like navigation speed |
-| `session_duration_std` | Irregular session patterns |
+| Group | Key Features | Anomaly Detected |
+|---|---|---|
+| Login | n_unique_ips, ip_switch_rate, simultaneous_login_ratio | A, F |
+| Impossible Travel | impossible_travel_count, impossible_travel_min_gap | M |
+| Brute Force | failed_login_ratio, brute_force_pattern | J |
+| Trading | volume_spike_ratio, inter_trade_regularity, trade_volume_cusum | C |
+| Off-hours | off_hours_trade_ratio, off_hours_interval_std | O |
+| First Session | first_session_volume_ratio, first_session_n_trades | P |
+| News Alignment | news_aligned_trade_ratio, news_aligned_trade_count | K |
+| Financial | small_deposit_ratio, deposit_per_trade | B, D |
+| Micro-probing | micro_deposit_count, micro_before_large | N |
+| Dormancy | dormancy_before_withdrawal_days | L |
+| Bonus Abuse | n_bonus_claims, bonus_to_deposit_ratio | H |
+| KYC | kyc_before_withdrawal_count, kyc_interval_min | I |
+| Session/Bot | max_navigation_rate, session_interval_regularity | E |
+| Cross-user | ip_hub_score, sync_trade_ratio, mirror_trade_score, withdrawal_cluster_score | G |
+
+---
+
+## Models
+
+### Baseline 1 — Isolation Forest
+Isolates anomalies by randomly partitioning the feature space. Anomalies require fewer splits (shorter average path length). Handles high-dimensional tabular data efficiently.
+- 200 trees, contamination=0.08
+- SHAP TreeExplainer for per-sample feature contributions
+
+### Baseline 2 — Local Outlier Factor (LOF)
+Captures local density anomalies — traders deviating from their peer neighbourhood rather than the global population. Effective for detecting users who behave unusually compared to similar accounts.
+- n_neighbors=20, novelty=True for inference on new data
+
+### Advanced — LSTM Autoencoder (PyTorch)
+Captures temporal dependencies invisible to static models. Trained only on normal users — anomalous sequences produce high reconstruction error.
+
+Architecture: Input (B, T=12, F=64) -> Encoder LSTM (2 layers, H=64) -> Bottleneck (latent=16) -> Decoder LSTM -> Output (B, T=12, F=64)
+
+Threshold set at 95th percentile of training reconstruction errors. Per-feature reconstruction error serves as the explanation.
+
+### Ensemble
+```
+score = 0.35 x IF  +  0.25 x LOF  +  0.40 x LSTM_AE
+```
+Also computes ensemble disagreement score (std dev of three model scores). High disagreement automatically flags for human review.
 
 ---
 
@@ -292,114 +205,83 @@ Weights are configurable in `config.py`. LSTM receives highest weight as it uniq
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Model status + user count |
-| `POST` | `/score` | Score user by ID |
-| `POST` | `/predict` | Score from raw feature dict |
-| `GET` | `/alerts` | All flagged users (sorted) |
-| `GET` | `/alerts/{user_id}` | Single-user alert detail |
-| `GET` | `/stream/start` | Launch async stream sim |
-| `GET` | `/stream/status` | Stream progress + alerts |
+| GET | /health | Model status + broker connectivity |
+| POST | /score | Score a known user by ID |
+| POST | /predict | Score from raw feature dict (online inference) |
+| GET | /alerts | All flagged users sorted by severity |
+| GET | /alerts/{user_id} | Single user detailed alert |
+| GET | /alerts/llm/{user_id} | Alert + Gemini LLM narrative |
+| GET | /alerts/llm/top/{n} | Top N alerts with LLM narratives |
+| GET | /stream/start | Start async streaming simulation |
+| GET | /stream/status | Stream progress + live alerts |
+| GET | /broker/status | Kafka + RabbitMQ connection status |
+| POST | /broker/test | Publish test alert to brokers |
 
-**Example alert response:**
-```json
-{
-  "user_id": "user_0123",
-  "ensemble_score": 0.812,
-  "severity": "HIGH",
-  "model_scores": {
-    "isolation_forest": 0.79,
-    "lof": 0.74,
-    "lstm_ae": 0.87
-  },
-  "top_features": {
-    "volume_spike_ratio": 0.621,
-    "n_unique_ips": 0.418,
-    "small_deposit_ratio": 0.310
-  },
-  "summary": "HIGH RISK: User user_0123 displays suspicious activity (81%). Key signals: Trade volume spike; Multiple IPs; Structuring deposits. Flag for compliance review within 24 hours.",
-  "action_required": "Place account under enhanced monitoring. Schedule compliance review within 24 h.",
-  "flags": [
-    "Trade volume spike (≥10× baseline)",
-    "Multiple distinct IP addresses detected",
-    "High ratio of sub-$1000 deposits (structuring signal)"
-  ]
-}
+---
+
+## Streaming and Message Brokers
+
+The streaming simulator replays 51,000 events asynchronously at 1000x speed. Alerts are published to:
+
+Kafka/Redpanda topics: forexguard.alerts.login, forexguard.alerts.trading, forexguard.alerts.deposit, forexguard.alerts.withdrawal, forexguard.alerts.critical
+
+RabbitMQ topic exchange with same routing keys — compliance teams bind queues with wildcards (forexguard.alerts.# for all alerts, forexguard.alerts.critical for critical only).
+
+Both brokers degrade gracefully if not running.
+
+---
+
+## Deployment
+
+### Local
+```bash
+pip install -r requirements.txt
+python train.py
+python -m uvicorn api.main:app --port 8000 --reload
 ```
 
----
-
-## Streaming Simulation
-
-`streaming/simulator.py` replays the event CSV asynchronously at 1000× speed in micro-batches of 50 events. Per batch:
-
-1. Events appended to per-user in-memory state
-2. Heuristic rule scorer checks 5 fast signals
-3. Score ≥ 0.60 → alert emitted
-4. Alerts accessible at `/stream/status`
-
-**To plug in real Kafka/Redpanda:** replace `_event_source()` with a `confluent-kafka` consumer. The rest of the pipeline is unchanged.
-
----
-
-## Docker Deployment
-
+### Docker
 ```bash
-# Build and start API + MLflow
 docker compose up --build
-
-# With Redpanda (Kafka-compatible)
-docker compose --profile kafka up --build
-
-# Run training inside container first
-docker compose run --rm api python train.py
-docker compose up api
 ```
 
-Services:
+Services: API on :8000, Redpanda Console on :8080, RabbitMQ UI on :15672, MLflow on :5000
 
-| Service | Port | URL |
-|---|---|---|
-| ForexGuard API | 8000 | http://localhost:8000/docs |
-| MLflow UI | 5000 | http://localhost:5000 |
-| Redpanda | 9092 | kafka://localhost:9092 |
+### Live (HuggingFace Spaces)
+```
+https://Lavanya-777-forexguard.hf.space/docs
+```
 
 ---
 
-## MLflow Tracking
+## Tech Stack
 
-```bash
-pip install mlflow
-mlflow ui --port 5000
-open http://localhost:5000
-```
-
-Tracked per training run:
-- **Params:** `n_users`, `n_features`, `anomaly_ratio`
-- **Metrics:** `auroc`, `precision`, `recall`, `f1` per model
-- **Artifacts:** `training_summary.json`
+| Layer | Tools |
+|---|---|
+| ML | PyTorch, scikit-learn, SHAP |
+| Data | Pandas, NumPy, SciPy |
+| API | FastAPI, Uvicorn, Pydantic |
+| Streaming | Async Python, confluent-kafka, pika (RabbitMQ) |
+| LLM | Google Gemini 1.5 Flash |
+| Tracking | MLflow |
+| Infra | Docker, HuggingFace Spaces |
 
 ---
 
-## Assumptions, Trade-offs & Limitations
+## Assumptions, Trade-offs and Limitations
 
 ### Assumptions
-- Injected anomaly patterns (IP cycling, deposit washing, volume spikes, structuring, bot navigation) represent realistic forex fraud scenarios. Real distributions would differ in frequency and magnitude.
-- Features computed over the full observation window. Production would use a 7-day or 30-day rolling window.
-- Labels exist only for offline evaluation; models are trained fully unsupervised.
+- Synthetic anomaly patterns represent realistic forex fraud scenarios
+- Features computed over full observation window (production would use 7-30 day rolling window)
+- Models trained fully unsupervised — labels used only for offline evaluation
 
 ### Trade-offs
-
-| Decision | Alternative | Reason |
-|---|---|---|
-| Per-user aggregate features | Event-level stream features | Simpler; sufficient for batch compliance review |
-| SHAP TreeExplainer on IF | LIME | Faster; architecturally consistent |
-| Heuristic scorer in stream | Full ML inference in stream | Avoids model I/O latency in hot path |
-| Async file replay | Real Kafka consumer | Zero infrastructure dependency; trivially swappable |
-| Fixed ensemble weights | Learned meta-model | Avoids label leakage; more robust with sparse anomaly labels |
+- Heuristic scorer used in stream instead of full ML inference to avoid 50-200ms latency in hot path
+- SHAP explainer rebuilt at training time only — not persisted — fallback uses raw feature magnitudes
+- TCP probe before Kafka initialisation prevents confluent-kafka stderr flooding when broker is offline
 
 ### Limitations
-- LSTM uses aggregate feature buckets rather than raw event embeddings, losing fine-grained temporal resolution.
-- No graph/network features (shared IPs across users, mirror trades). These require a graph DB + GNN-based detection.
-- LOF degrades in very high dimensions; PCA pre-projection would improve it.
-- No concept drift detection — models need retraining weekly in production.
-- LSTM streaming inference requires sequence materialisation (~50–200 ms latency per user per batch).
+- Cross-user graph features computed in-memory at training time — would need Neo4j in production
+- LSTM uses aggregate 4-hour time buckets rather than raw event embeddings
+- No concept drift detection — models should be retrained weekly in production
+- HuggingFace free tier sleeps after 15 min inactivity — first request after sleep takes ~30 seconds
