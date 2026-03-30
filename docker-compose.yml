@@ -1,0 +1,104 @@
+version: "3.9"
+
+services:
+
+  # ── ForexGuard API ──────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: forexguard_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./saved_models:/app/saved_models
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASS=guest
+      - ALERT_MIN_SEVERITY=MEDIUM
+    command: python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - redpanda
+      - rabbitmq
+      - mlflow
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Redpanda (Kafka-compatible) ─────────────────────────────────────────────
+  redpanda:
+    image: redpandadata/redpanda:v23.3.11
+    container_name: forexguard_redpanda
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+      - "8081:8081"   # Schema Registry
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp 1
+      - --memory 512M
+      - --reserve-memory 0M
+      - --node-id 0
+      - --check=false
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092
+    restart: unless-stopped
+
+  # ── Redpanda Console (UI) ───────────────────────────────────────────────────
+  redpanda-console:
+    image: redpandadata/console:v2.3.8
+    container_name: forexguard_redpanda_console
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:9092
+    depends_on:
+      - redpanda
+    restart: unless-stopped
+
+  # ── RabbitMQ ────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: forexguard_rabbitmq
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── MLflow ──────────────────────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.1
+    container_name: forexguard_mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+    command: >
+      mlflow server
+        --backend-store-uri sqlite:////mlruns/mlflow.db
+        --default-artifact-root /mlruns/artifacts
+        --host 0.0.0.0
+        --port 5000
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  mlruns:

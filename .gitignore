@@ -1,0 +1,10 @@
+__pycache__/ 
+*.pyc 
+saved_models/ 
+data/events.csv 
+data/features.csv 
+data/labels.csv 
+data/cross_features.csv 
+data/news_events.csv 
+mlruns/ 
+.env 
