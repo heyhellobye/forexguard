@@ -12,6 +12,8 @@ COPY . .
 
 RUN mkdir -p saved_models data
 
-EXPOSE 8000
+RUN python train.py
 
-CMD ["python", "train.py"]
+EXPOSE 7860
+
+CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "7860"]
